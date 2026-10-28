@@ -138,7 +138,9 @@ html[data-ascii] button[class*="_newSession"]:is(:hover, :focus-visible) {
   background: var(--dsw-alias-label-primary) !important;
   color: var(--dsw-alias-bg-base) !important;
 }
-html[data-ascii] button[class*="_newSession"] :is([class*="_newSessionLabelMask"], [class*="_newSessionContent"]) {
+/* Only the expanded sidebar: the rail is a 36px square holding just the plus
+   icon, and left-aligning its content pins that icon 9px off-centre. */
+html[data-ascii] [class*="_root"]:not([class*="_collapsed"]) button[class*="_newSession"] :is([class*="_newSessionLabelMask"], [class*="_newSessionContent"]) {
   justify-content: flex-start !important;
 }
 html[data-ascii] [class*="_root"]:not([class*="_collapsed"]) > button[class*="_newSession"] [class*="_newSessionContent"] > svg {

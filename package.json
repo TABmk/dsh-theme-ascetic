@@ -1,6 +1,6 @@
 {
   "name": "dsh-theme-ascetic",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "ASCetic: a compact ASCII / terminal skin for DeepSeek Harness: monospace type, square box-drawing chrome, palettes, densities, a vim-style status line, ascii.rest hero art and chat bubbles.",
   "keywords": [
     "dsh-plugin",

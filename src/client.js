@@ -33,15 +33,58 @@ import { playIntro } from './intro.js'
 import { PALETTE_CHOICES, PALETTE_GROUPS, pinnedScheme, previewOf, tokenLayer } from './palettes.js'
 import { CHAT_STYLES, DEFAULTS, DENSITIES, HEROES, LOGO_MAX, prefs, watchStorage } from './prefs.js'
 import { DENSITY_CSS, DENSITY_ROWS } from './density.js'
+import MOBILE_CSS from './mobile.css'
 import SKIN_CSS from './skin.css'
 
 const SOURCE = 'dsh-theme-ascetic'
 const h = React.createElement
 
+/** Phone layout: narrow, or short (a phone in landscape is wide and short). */
+const COMPACT_Q = '(max-width: 767px), (max-height: 500px)'
+/** No cursor at all: the bar the status line draws for a thumb, at any width. */
+const TOUCH_Q = `(pointer: coarse), ${COMPACT_Q}`
+
 /* ---------- shared helpers ------------------------------------------------ */
 
 function usePrefs() {
   return React.useSyncExternalStore(prefs.subscribe, prefs.get, prefs.get)
+}
+
+/** Follow a media query the way usePrefs follows storage. */
+function useMedia(query) {
+  const read = () => typeof matchMedia === 'function' && matchMedia(query).matches
+  const subscribe = React.useCallback((fn) => {
+    if (typeof matchMedia !== 'function') return () => {}
+    const mq = matchMedia(query)
+    mq.addEventListener('change', fn)
+    return () => { mq.removeEventListener('change', fn) }
+  }, [query])
+  return React.useSyncExternalStore(subscribe, read, read)
+}
+
+/**
+ * The numbers the compact status row summarises, published by the session seat
+ * (which owns the session-scope hooks) for the sheet drawn in `shell.overlay`,
+ * outside that scope. Same shape as `notice` and `menu`.
+ */
+const dash = {
+  value: null,
+  key: '',
+  listeners: new Set(),
+  /** Shallow merge: the seat and the status line publish different halves. */
+  set(patch) {
+    const next = { ...dash.value, ...patch }
+    const key = JSON.stringify(next)
+    if (key === dash.key) return
+    dash.key = key
+    dash.value = next
+    for (const fn of dash.listeners) fn()
+  },
+  subscribe(fn) {
+    dash.listeners.add(fn)
+    return () => { dash.listeners.delete(fn) }
+  },
+  get: () => dash.value,
 }
 
 /** Transient one-line message shown in the status line. */
@@ -191,10 +234,11 @@ function applyDocument(ctx, p) {
 
 function clearDocument() {
   const root = document.documentElement
-  for (const key of ['ascii', 'asciiDensity', 'asciiPalette', 'glyphs', 'asciiCrt', 'asciiNoBrand', 'asciiNoDock', 'asciiNoStatus', 'asciiChat', 'asciiPin', 'asciiScheme']) {
+  for (const key of ['ascii', 'asciiDensity', 'asciiPalette', 'glyphs', 'asciiCrt', 'asciiNoBrand', 'asciiNoDock', 'asciiNoStatus', 'asciiChat', 'asciiPin', 'asciiScheme', 'asciiKb']) {
     delete root.dataset[key]
   }
   root.style.removeProperty('--ax-pop-x')
+  root.style.removeProperty('--ax-kb')
 }
 
 function installSkin(ctx) {
@@ -202,7 +246,7 @@ function installSkin(ctx) {
     const tag = document.createElement('style')
     tag.dataset.plugin = SOURCE
     tag.dataset.pluginCss = `${SOURCE}/skin.css`
-    tag.textContent = `${SKIN_CSS}\n${DENSITY_CSS}`
+    tag.textContent = `${SKIN_CSS}\n${DENSITY_CSS}\n${MOBILE_CSS}`
     document.head.appendChild(tag)
     return () => { tag.remove() }
   }, 'ascii: stylesheets')
@@ -445,6 +489,28 @@ function StatusSession(props) {
       h('span', { className: 'ax-ok' }, `${facts.ok}✓`),
       facts.err > 0 ? h('span', { className: 'ax-err' }, `${facts.err}✗`) : null))
   }
+
+  // The compact bar and its sheet read the same numbers from `dash`: they are
+  // drawn outside the session scope, so the seat publishes what it folded.
+  const tps = stats && typeof stats.decodeMs === 'number' && stats.decodeMs > 0 && typeof stats.decodeTokens === 'number' && stats.decodeTokens > 0
+    ? stats.decodeTokens / (stats.decodeMs / 1000)
+    : null
+  React.useEffect(() => {
+    dash.set({
+      sessionId: props.sessionId ?? null,
+      running: facts.running,
+      active: facts.active,
+      ok: facts.ok,
+      err: facts.err,
+      turnStart: facts.turnStart,
+      turns: stats && typeof stats.turns === 'number' ? stats.turns : null,
+      steps: stats?.steps ?? null,
+      tokPerSec: tps,
+      context: capacity !== null && used !== null ? { used, capacity } : null,
+      tokens: input + (usage?.outputTokens ?? 0) > 0 ? { input, output: usage?.outputTokens ?? 0, read } : null,
+    })
+  })
+
   return h(React.Fragment, null, segs)
 }
 
@@ -462,9 +528,10 @@ function useRunningCount(props) {
 /**
  * A popup above the status line: closes on Escape, a resize (it is placed
  * once) or a press outside it (its own toggles excepted, they toggle it), and
- * arrow keys walk its rows.
+ * arrow keys walk its rows. On a phone the same element is a bottom sheet
+ * (mobile.css), and the sheet gets a grip row that doubles as its close button.
  */
-function Popup({ className, style, onClose, children }) {
+function Popup({ className, style, title, onClose, children }) {
   const ref = React.useRef(null)
   React.useEffect(() => {
     const onDown = (e) => {
@@ -476,7 +543,10 @@ function Popup({ className, style, onClose, children }) {
     document.addEventListener('keydown', onKey, true)
     window.addEventListener('resize', onClose)
     const el = ref.current
-    ;(el?.querySelector('[aria-checked="true"]') ?? el?.querySelector('button'))?.focus()
+    // Focus the chosen row (or the first real row): the sheet grip is a close
+    // affordance and focusing it draws a ring across the sheet's top edge.
+    const rows = [...(el?.querySelectorAll('button') ?? [])].filter((b) => !b.classList.contains('ax-sheet-grip'))
+    ;(el?.querySelector('[aria-checked="true"]') ?? rows[0])?.focus()
     return () => {
       document.removeEventListener('pointerdown', onDown, true)
       document.removeEventListener('keydown', onKey, true)
@@ -490,16 +560,64 @@ function Popup({ className, style, onClose, children }) {
     const at = rows.indexOf(document.activeElement)
     rows[(at + (e.key === 'ArrowDown' ? 1 : rows.length - 1)) % rows.length]?.focus()
   }
-  return h('div', { ref, className, style, role: 'menu', onKeyDown }, children)
+  return h('div', { ref, className, style, role: 'menu', onKeyDown },
+    h(SheetGrip, { title, onClose }),
+    children)
+}
+
+/** The compact sheet's grabber: a full-width close row, not a 4px bar. */
+function SheetGrip({ title, onClose }) {
+  const compact = useMedia(COMPACT_Q)
+  if (!compact) return null
+  return h('button', {
+    role: 'menuitem',
+    className: 'ax-sheet-grip',
+    'aria-label': `close ${title || 'menu'}`,
+    onClick: onClose,
+  },
+  h('span', null, '╭─', title || 'menu'),
+  h('span', { className: 'ax-hint' }, '▾ close'))
 }
 
 function QuickMenu({ p, onClose }) {
+  const compact = useMedia(COMPACT_Q)
+  const [expanded, setExpanded] = React.useState(null)
   const row = (key, label, value, onClick) => h('button', { key, className: 'ax-menu-row', onClick },
     h('span', null, label), h('span', { className: 'ax-key' }, value))
-  return h(Popup, { className: 'ax-menu', onClose },
-    h('div', { className: 'ax-menu-title' }, '┌─ ascii ─ click to cycle'),
-    row('pal', 'palette', `< ${p.palette} >`, () => prefs.cycle('palette', PALETTE_CHOICES)),
-    row('den', 'density', `< ${p.density} >`, () => prefs.cycle('density', DENSITIES)),
+  // A cycle row is fine with a mouse. In a sheet it is up to 18 taps to reach
+  // one of the 19 palettes, so the sheet expands the list inline instead:
+  // every option visible, one tap to choose.
+  const pick = (key, label, field, values) => {
+    if (!compact) {
+      return row(key, label, `< ${p[field]} >`, () => prefs.cycle(field, values))
+    }
+    const open = expanded === field
+    return h(React.Fragment, { key },
+      h('button', {
+        className: 'ax-menu-row',
+        'aria-expanded': open,
+        'aria-haspopup': 'listbox',
+        onClick: () => setExpanded(open ? null : field),
+      },
+      h('span', null, label),
+      h('span', { className: 'ax-key' }, p[field]),
+      h('span', { className: 'ax-caret' }, open ? '▾' : '▸')),
+      open ? h('div', { className: 'ax-options', role: 'listbox', 'aria-label': label },
+        values.map((v) => h('button', {
+          key: v,
+          role: 'option',
+          className: 'ax-option',
+          'aria-selected': p[field] === v,
+          onClick: () => { prefs.set({ [field]: v }); setExpanded(null) },
+        },
+        field === 'palette' ? h(Swatch, { choice: v }) : null,
+        h('span', { className: 'ax-option-name' }, v),
+        field === 'density' ? h('span', { className: 'ax-dim ax-option-hint' }, DENSITY_ROWS[v]) : null))) : null)
+  }
+  return h(Popup, { className: 'ax-menu', title: 'ascii', onClose },
+    h('div', { className: 'ax-menu-title' }, compact ? '┌─ ascii' : '┌─ ascii ─ click to cycle'),
+    pick('pal', 'palette', 'palette', PALETTE_CHOICES),
+    pick('den', 'density', 'density', DENSITIES),
     row('chat', 'chat style', `< ${p.chat} >`, () => prefs.cycle('chat', CHAT_STYLES)),
     row('hero', 'hero art', `< ${p.hero} >`, () => prefs.cycle('hero', HEROES)),
     h('label', { key: 'logo', className: 'ax-menu-row ax-menu-field' }, h('span', null, 'logo text'), h(LogoInput)),
@@ -537,7 +655,7 @@ function Picker({ field, p, onClose }) {
   h('span', { className: 'ax-radio' }, p[field] === value ? '(•)' : '( )'),
   h('span', null, value),
   h('span', { className: 'ax-hint' }, hint(value)))
-  return h(Popup, { className: 'ax-menu ax-pick', style: { right: menu.right }, onClose },
+  return h(Popup, { className: 'ax-menu ax-pick', style: { right: menu.right }, title: field, onClose },
     h('div', { className: 'ax-menu-title' }, `┌─ ${field}`),
     groups.map((group, i) => h(React.Fragment, { key: i },
       group.label ? h('div', { className: 'ax-menu-group', role: 'presentation' }, `── ${group.label}`) : null,
@@ -556,14 +674,112 @@ function PickButton({ field, label, open, value }) {
   }, h('span', { className: 'ax-dim' }, label), value)
 }
 
+/**
+ * The compact bar's seat: the same facts on one line, one tap from the sheet.
+ * A phone cannot hold eleven segments, so this is what the vim bar becomes —
+ * the row keeps the state, the tool count and the context meter, and the sheet
+ * behind it keeps everything else (including the stock popovers).
+ */
+function SummarySeg() {
+  const d = React.useSyncExternalStore(dash.subscribe, dash.get, dash.get)
+  const message = React.useSyncExternalStore(notice.subscribe, notice.get, notice.get)
+  const open = React.useSyncExternalStore(menu.subscribe, menu.get, menu.get)
+  useTick(1000, d?.running === true)
+  const parts = []
+  if (d?.running) {
+    parts.push(h('span', { key: 'st', className: 'ax-run' }, '● RUN ',
+      d.turnStart !== null && d.turnStart !== undefined ? h('span', null, elapsed(Date.now() - d.turnStart)) : null))
+  } else {
+    parts.push(h('span', { key: 'st', className: 'ax-idle' }, d?.sessionId ? '○ IDLE' : '○ NEW'))
+  }
+  if (d?.active > 0) parts.push(h('span', { key: 'tl', className: 'ax-dim' }, `${d.active} tool${d.active === 1 ? '' : 's'}`))
+  if (d?.context) {
+    const ratio = d.context.used / d.context.capacity
+    const [full, empty] = meter(ratio)
+    parts.push(h('span', { key: 'cx', className: 'ax-bar' }, '▕', full, h('span', { className: 'ax-dim' }, empty), '▏', `${Math.round(ratio * 100)}%`))
+  }
+  parts.push(h('span', { key: 'ch', className: 'ax-chev' }, '▴'))
+  return h('button', {
+    className: 'ax-seg ax-summary',
+    'aria-haspopup': 'menu',
+    'aria-expanded': open === 'stats',
+    'data-ascii-menu-toggle': '',
+    title: message || 'session state and statistics',
+    onClick: () => menu.toggle('stats'),
+  },
+  message ? h('span', { key: 'msg', className: 'ax-toast' }, message) : parts)
+}
+
+/** The compact sheet: the vim bar as an htop panel, every row 48px. */
+function StatsSheet({ onClose }) {
+  const d = React.useSyncExternalStore(dash.subscribe, dash.get, dash.get) ?? {}
+  const wasOpen = React.useRef(false)
+  const row = (key, label, value, kind = null) => {
+    if (value === null || value === undefined || value === '') return null
+    const cells = [h('span', { key: 'l', className: 'ax-dim' }, label), h('span', { key: 'v', className: 'ax-hint' }, value)]
+    if (kind === null) return h('div', { key, className: 'ax-menu-row ax-row-info' }, cells)
+    return h('button', {
+      key,
+      className: 'ax-menu-row',
+      title: `${label}: details`,
+      onPointerDown: () => { wasOpen.current = statTrigger(kind)?.getAttribute('aria-expanded') === 'true' },
+      onClick: (e) => {
+        const el = e.currentTarget
+        menu.set(null)
+        openStat(kind, el, wasOpen.current)
+        wasOpen.current = false
+      },
+    }, cells)
+  }
+  const state = d.running
+    ? `● RUN ${d.turnStart !== null && d.turnStart !== undefined ? elapsed(Date.now() - d.turnStart) : ''}`.trim()
+    : (d.sessionId ? '○ IDLE' : '○ NEW')
+  const ctx = d.context
+    ? `${Math.round((d.context.used / d.context.capacity) * 100)}% · ${formatTokens(d.context.used)}/${formatTokens(d.context.capacity)}`
+    : null
+  const tokens = d.tokens
+    ? `↑${formatTokens(d.tokens.input)} ↓${formatTokens(d.tokens.output)}${d.tokens.input > 0 ? ` · hit ${Math.round((d.tokens.read / d.tokens.input) * 100)}%` : ''}`
+    : null
+  const activity = d.turns !== null && d.turns !== undefined
+    ? `${d.turns} ${d.turns === 1 ? 'turn' : 'turns'} · ${d.steps ?? 0} steps${d.tokPerSec ? ` · ${Math.round(d.tokPerSec)} tok/s` : ''}`
+    : null
+  return h(Popup, { className: 'ax-menu ax-sheet', title: 'status', onClose },
+    row('state', 'state', d.active > 0 ? `${state} · ${d.active} tool${d.active === 1 ? '' : 's'}` : state),
+    row('act', 'activity', activity, 'activity'),
+    row('ctx', 'context', ctx, 'context'),
+    row('tok', 'tokens', tokens, 'usage'),
+    row('tools', 'tools', d.ok + d.err > 0 ? `${d.ok}✓${d.err > 0 ? ` ${d.err}✗` : ''}` : null),
+    row('run', 'running', d.runningGlobal > 0 ? `${d.runningGlobal} across workspaces` : null),
+    row('clock', 'time', `${pad2(new Date().getHours())}:${pad2(new Date().getMinutes())}`))
+}
+
 function StatusLine(props) {
   const p = usePrefs()
   const message = React.useSyncExternalStore(notice.subscribe, notice.get, notice.get)
   const open = React.useSyncExternalStore(menu.subscribe, menu.get, menu.get)
   const running = useRunningCount(props)
+  const compact = useMedia(TOUCH_Q)
   useTick(15000, p.statusline)
+  // The sheet lists this beside the session's own counters.
+  React.useEffect(() => { dash.set({ runningGlobal: running }) })
   if (!p.statusline) return null
   const now = new Date()
+  // On a phone the bar carries three targets: the account menu, the theme
+  // sheet and the seat. The seat's own segments stay mounted (they publish to
+  // `dash`), and mobile.css hides them.
+  if (compact) {
+    return h('div', { className: 'ax-status', 'data-ascii-statusline': '' },
+      h(GearButton),
+      h('button', {
+        className: 'ax-seg ax-mode',
+        onClick: () => menu.toggle('ascii'),
+        title: 'ASCII theme menu',
+        'aria-expanded': open === 'ascii',
+        'data-ascii-menu-toggle': '',
+      }, 'ASCII'),
+      h(SummarySeg),
+      props.renderSlot('ascii.status.session', {}))
+  }
   return h('div', { className: 'ax-status', 'data-ascii-statusline': '' },
     h(GearButton),
     h('button', {
@@ -592,6 +808,7 @@ function MenuOverlay() {
   const close = React.useCallback(() => { menu.set(null) }, [])
   if (open === null || !p.statusline) return null
   if (open === 'ascii') return h(QuickMenu, { p, onClose: close })
+  if (open === 'stats') return h(StatsSheet, { onClose: close })
   return h(Picker, { key: open, field: open, p, onClose: close })
 }
 
@@ -605,6 +822,93 @@ function registerStatusLine(ctx) {
   // The seat is declared by the shell.bottom entry above, so wait for it.
   ctx.slots.inject('ascii.status.session', () => ctx.slots.register(
     { name: 'ascii.status.session', id: 'ascii.status.session' }, guarded('status session', StatusSession)))
+}
+
+/* ---------- 3b. viewport --------------------------------------------------- */
+
+/**
+ * The one thing CSS units cannot tell us: whether the virtual keyboard is up.
+ * `interactive-widget=resizes-content` resizes the layout viewport on Chromium,
+ * so nothing is needed there, but WebKit always overlays the keyboard and has no
+ * opt-out (bugs.webkit.org 259770), and iOS pans the visual viewport, so
+ * offsetTop has to come out of the height. rAF-batched: the listeners fire in
+ * bursts while the keyboard animates.
+ */
+function installViewport(ctx) {
+  ctx.effect(() => {
+    const vv = window.visualViewport
+    const root = document.documentElement
+    let raf = 0
+    const apply = () => {
+      raf = 0
+      if (!vv) return
+      const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+      root.style.setProperty('--ax-kb', `${Math.round(kb)}px`)
+      // 120px of hysteresis: the URL bar collapsing is not a keyboard
+      if (kb > 120) root.dataset.asciiKb = ''
+      else delete root.dataset.asciiKb
+    }
+    const schedule = () => { if (raf === 0) raf = requestAnimationFrame(apply) }
+    if (vv) {
+      vv.addEventListener('resize', schedule, { passive: true })
+      vv.addEventListener('scroll', schedule, { passive: true })
+    }
+    apply()
+    return () => {
+      if (raf !== 0) cancelAnimationFrame(raf)
+      if (vv) {
+        vv.removeEventListener('resize', schedule)
+        vv.removeEventListener('scroll', schedule)
+      }
+      root.style.removeProperty('--ax-kb')
+      delete root.dataset.asciiKb
+    }
+  }, 'ascii: viewport')
+}
+
+/* ---------- 3c. drawer scrim ---------------------------------------------- */
+
+/**
+ * The scrim behind an off-canvas sidebar. It has to be a body-level element: a
+ * fixed pseudo-element on the app frame paints behind the frame's own opaque
+ * background and never shows, and the drawer itself sits at z-index 1300.
+ *
+ * Detection is geometric rather than attribute-based, so it holds whether the
+ * drawer comes from the companion mobile plugin (which is where
+ * `[data-mobile-nav]` comes from) or from a future host build: the sidebar is
+ * "open as a drawer" when the conversation column starts behind it. A sidebar
+ * sitting in its own grid track never satisfies that.
+ */
+function installDrawerScrim(ctx) {
+  ctx.effect(() => {
+    const scrim = document.createElement('div')
+    scrim.className = 'ax-drawer-scrim'
+    scrim.setAttribute('aria-hidden', 'true')
+    let timer = 0
+    const apply = () => {
+      const side = document.querySelector('[class*="_sidebarCol"]')
+      const conversation = document.querySelector('[data-conversation-content]')
+      const narrow = !window.matchMedia || matchMedia('(max-width: 1023px)').matches
+      let want = false
+      if (side?.isConnected && narrow && conversation) {
+        const drawer = side.getBoundingClientRect()
+        const column = conversation.getBoundingClientRect()
+        want = drawer.width > 1 && drawer.height > 1 && drawer.right > column.left + 1
+      }
+      if (want && !scrim.isConnected) document.body.append(scrim)
+      else if (!want && scrim.isConnected) scrim.remove()
+    }
+    // A timer, not rAF: the drawer animates with a transition and rAF stalls
+    // while the window is hidden.
+    timer = setInterval(apply, 200)
+    window.addEventListener('resize', apply, { passive: true })
+    apply()
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('resize', apply)
+      scrim.remove()
+    }
+  }, 'ascii: drawer scrim')
 }
 
 /* ---------- 4. hero art ---------------------------------------------------- */
@@ -887,7 +1191,7 @@ function installIntro(ctx) {
 /* ---------- plugin body ---------------------------------------------------- */
 
 function apply(ctx) {
-  for (const step of [installSkin, installIntro, registerStatusLine, registerHero, registerSettings, installNewSessionArt]) {
+  for (const step of [installSkin, installViewport, installDrawerScrim, installIntro, registerStatusLine, registerHero, registerSettings, installNewSessionArt]) {
     if (!__DEV__) { step(ctx); continue }
     try {
       step(ctx)
