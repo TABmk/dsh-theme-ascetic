@@ -17,6 +17,46 @@ const SWEEP = 0.9 // seconds a glint takes to cross
 
 const heavy = (ch) => HEAVY[ch] ?? ch
 
+/** East Asian Wide and Fullwidth ranges: the characters drawn two cells across. */
+const wide = (c) => c >= 0x1100 && (
+  c <= 0x115f || c === 0x2329 || c === 0x232a
+  || (c >= 0x2e80 && c <= 0xa4cf && c !== 0x303f)
+  || (c >= 0xac00 && c <= 0xd7a3) || (c >= 0xf900 && c <= 0xfaff)
+  || (c >= 0xfe10 && c <= 0xfe19) || (c >= 0xfe30 && c <= 0xfe6f)
+  || (c >= 0xff00 && c <= 0xff60) || (c >= 0xffe0 && c <= 0xffe6)
+)
+
+/**
+ * The width of `text` in cells: a wide character takes two, the rest one.
+ * Padding by `String.length` leaves the row short by one cell per wide
+ * character, which pushes the right border out of the frame.
+ * @param {string} text - the text as it will be drawn.
+ */
+const cells = (text) => {
+  let n = 0
+  for (const ch of text) n += wide(ch.codePointAt(0)) ? 2 : 1
+  return n
+}
+
+/**
+ * `text` cut to at most `room` cells, with an ellipsis when anything is left out.
+ * @param {string} text - the text as it will be drawn.
+ * @param {number} room - the cells it may take.
+ */
+const fit = (text, room) => {
+  if (cells(text) <= room) return text
+  let out = ''
+  let used = 0
+  for (const ch of text) {
+    const w = wide(ch.codePointAt(0)) ? 2 : 1
+    if (used + w > room - 1) break
+    out += ch
+    used += w
+  }
+  return `${out}…`
+}
+
+
 /**
  * @param {number} cols - width in cells (at least 18).
  * @param {string} label - the button's own label, shown lower-case.
@@ -27,7 +67,7 @@ export function newSessionPiece(cols, label, hot) {
   const arrow = '──>'
   const left = ` [+] ${label.toLowerCase()}`
   const room = inner - arrow.length - 1
-  const text = (left.length > room ? `${left.slice(0, room - 1)}…` : left.padEnd(room)) + arrow + ' '
+  const text = (cells(left) > room ? fit(left, room) : left + ' '.repeat(room - cells(left))) + arrow + ' '
   const rows = ['╭' + '─'.repeat(inner) + '╮', '│' + text + '│', '╰' + '─'.repeat(inner) + '╯']
   const travel = cols + BAND + 3
 
