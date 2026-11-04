@@ -56,7 +56,6 @@ const fit = (text, room) => {
   return `${out}…`
 }
 
-
 /**
  * @param {number} cols - width in cells (at least 18).
  * @param {string} label - the button's own label, shown lower-case.
@@ -67,7 +66,8 @@ export function newSessionPiece(cols, label, hot) {
   const arrow = '──>'
   const left = ` [+] ${label.toLowerCase()}`
   const room = inner - arrow.length - 1
-  const text = (cells(left) > room ? fit(left, room) : left + ' '.repeat(room - cells(left))) + arrow + ' '
+  const shown = fit(left, room)
+  const text = shown + ' '.repeat(room - cells(shown)) + arrow + ' '
   const rows = ['╭' + '─'.repeat(inner) + '╮', '│' + text + '│', '╰' + '─'.repeat(inner) + '╯']
   const travel = cols + BAND + 3
 
@@ -80,17 +80,22 @@ export function newSessionPiece(cols, label, hot) {
       const run = on ? Math.floor(t * 8) % 2 : -1
       return rows.map((row, y) => {
         let out = ''
-        for (let x = 0; x < row.length; x += 1) {
-          let ch = row[x]
-          if (run >= 0 && y === 1 && x >= inner - arrow.length && x < inner) {
-            const k = x - (inner - arrow.length)
+        let col = 0 // cell column: a wide character spans two
+        for (const ch0 of row) {
+          let ch = ch0
+          const w = wide(ch.codePointAt(0)) ? 2 : 1
+          if (run >= 0 && y === 1 && col >= inner - arrow.length && col < inner) {
+            const k = col - (inner - arrow.length)
             if (k === run) ch = '━'
           }
-          const d = head - y - x // slanted: lower rows trail
-          if (d >= 0 && d < BAND) ch = ch === ' ' ? (y === 1 ? '░' : ch) : heavy(ch)
+          // a glint touching any cell of a wide character lights all of it
+          const hit = (c) => { const d = head - y - c; return d >= 0 && d < BAND }
+          const lit = hit(col) || (w === 2 && hit(col + 1))
+          if (lit) ch = ch === ' ' ? (y === 1 ? '░' : ch) : heavy(ch)
           else if (on && y !== 1) ch = heavy(ch)
-          else if (on && (x === 0 || x === row.length - 1)) ch = heavy(ch)
+          else if (on && (col === 0 || col + w === cols)) ch = heavy(ch)
           out += ch
+          col += w
         }
         return out
       }).join('\n')
