@@ -20,6 +20,7 @@
 - **3 densities.** `cozy`, `compact`, `dense`: rows, spacing and type tighten together.
 - **Status line.** Agent state and turn timer, steps and tok/s, a context meter, tokens and tool calls; click a segment for its details.
 - **ASCII art.** Hero scenes from [ascii.rest](https://ascii.rest) on empty sessions, a framed New Session button, a retro boot intro with your own logo text.
+- **Touch layout.** On a phone the status line becomes one thumb-sized row and menus become bottom sheets.
 
 ![The sidebar at three densities: cozy, compact, dense](docs/screenshots/densities.png)
 
@@ -33,6 +34,19 @@
 <td width="50%"><img src="docs/screenshots/intro.png" alt="The boot intro: a block-letter DEEPSEEK logo over HARNESS"><br><sub>Boot intro; the logo text is yours to change</sub></td>
 </tr>
 </table>
+
+<details>
+<summary>On a phone</summary>
+
+<table>
+<tr>
+<td width="31%"><img src="docs/screenshots/mobile-after-chat.jpg" alt="The theme on a 390px phone: the compact status row with RUN, tool count and context meter"><br><sub>390px: one thumb row</sub></td>
+<td width="31%"><img src="docs/screenshots/mobile-after-sheet.jpg" alt="The ASCII menu as a bottom sheet with 48px rows"><br><sub>The menu as a bottom sheet</sub></td>
+<td width="31%"><img src="docs/screenshots/mobile-after-drawer.jpg" alt="The session drawer over a dimmed conversation"><br><sub>Drawer with a scrim</sub></td>
+</tr>
+</table>
+
+</details>
 
 ## Install
 
