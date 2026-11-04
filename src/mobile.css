@@ -12,7 +12,7 @@
  *   touch    (pointer: coarse)                        -> hit SIZES
  *            a tablet or a phone at any width still has a thumb, not a cursor.
  *
- * Numbers come from the platform guidelines (see docs/mobile.md): 44x44 CSS px
+ * Numbers come from the platform guidelines : 44x44 CSS px
  * hit regions, 48px sheet rows, 16px inputs (iOS zooms below that), 8px+
  * between targets, env(safe-area-inset-*) wherever the chrome meets an edge.
  */
@@ -143,23 +143,17 @@ html[data-ascii] {
     padding: 0 env(safe-area-inset-right, 0px) calc(10px + env(safe-area-inset-bottom, 0px))
       env(safe-area-inset-left, 0px);
     border-top: 1px solid var(--ax-line);
-    box-shadow: 0 -1px 0 0 var(--ax-line) !important;
     font: 14px/20px var(--ax-mono, monospace);
     white-space: normal;
     /* above the header (which the companion plugin stacks over the page) and
        below the drawer's 1300 */
     z-index: 1200;
   }
-  /* A sheet is modal: dim what is behind it. Negative z-index paints the scrim
-     above the page but under the sheet's own background, and pointer-events
-     stays none so the outside tap still reaches the page and closes the sheet. */
-  html[data-ascii] .ax-menu::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    background: color-mix(in srgb, #000 55%, transparent);
-    pointer-events: none;
+  /* A sheet is modal: dim what is behind it. A huge spread shadow paints the
+     scrim around the sheet only (never over its own background) and takes no
+     pointer events, so the outside tap still reaches the page and closes it. */
+  html[data-ascii] .ax-menu {
+    box-shadow: 0 -1px 0 0 var(--ax-line), 0 0 0 100vmax color-mix(in srgb, #000 55%, transparent) !important;
   }
   html[data-ascii] .ax-menu .ax-sheet-grip {
     display: flex;
@@ -174,14 +168,11 @@ html[data-ascii] {
     font: 12px/var(--ax-hit) var(--ax-mono, monospace);
   }
   html[data-ascii] .ax-menu .ax-sheet-grip .ax-hint { margin-left: auto; }
-  html[data-ascii] .ax-menu-title {
-    min-height: 0;
-    padding: 6px var(--ax-gutter) 2px;
-    font-size: 11px;
-  }
+  /* the grip row already carries the title, drawn the same way */
+  html[data-ascii] .ax-menu .ax-menu-title { display: none; }
   /* ---- option lists inside the sheet --------------------------------------
      A cycle row over 19 palettes is up to 18 taps; expanded, every option is
-     visible and one tap away (docs/mobile.md). */
+     visible and one tap away */
   html[data-ascii] .ax-menu .ax-options {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -477,9 +468,12 @@ html[data-ascii] {
   /* the hero: a banner column is 6.85px wide, so a 79-column logo wants 540px.
      It is a real button (it steps the art), so it needs a tappable box too. */
   html[data-ascii] .ax-hero[data-ascii-hero="banner"] {
-    font-size: min(7px, calc(min(560px, 88vw) / var(--ax-hero-cols, 79) / .6));
+    /* The column is the viewport minus the 56px rail, the 8px gutter and the
+       hero's own 24px padding on each side (112px); a glyph is .6em wide.
+       Sizing from vw alone ignored the rail and clipped the art on the right. */
+    font-size: min(7px, calc(min(560px, 100vw - 112px) / var(--ax-hero-cols, 79) / .6));
   }
-  html[data-ascii] .ax-hero[data-ascii-hero="chat"] { width: min(320px, 86vw) !important; }
+  html[data-ascii] .ax-hero[data-ascii-hero="chat"] { width: min(320px, calc(100vw - 112px)) !important; }
   html[data-ascii] .ax-hero:not(#ax-specificity) { min-height: var(--ax-hit); }
   html[data-ascii] [class*="_headline"] [class*="_titleGroup"] { font-size: 14px; }
 }

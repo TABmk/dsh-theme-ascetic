@@ -84,6 +84,10 @@ const dash = {
     dash.listeners.add(fn)
     return () => { dash.listeners.delete(fn) }
   },
+  /** The seat unmounted: drop its numbers so the bar does not show a stale session. */
+  clear() {
+    dash.set({ sessionId: null, running: false, active: 0, ok: 0, err: 0, turnStart: null, turns: null, steps: null, tokPerSec: null, context: null, tokens: null })
+  },
   get: () => dash.value,
 }
 
@@ -495,6 +499,7 @@ function StatusSession(props) {
   const tps = stats && typeof stats.decodeMs === 'number' && stats.decodeMs > 0 && typeof stats.decodeTokens === 'number' && stats.decodeTokens > 0
     ? stats.decodeTokens / (stats.decodeMs / 1000)
     : null
+  React.useEffect(() => dash.clear, [])
   React.useEffect(() => {
     dash.set({
       sessionId: props.sessionId ?? null,
@@ -541,7 +546,9 @@ function Popup({ className, style, title, onClose, children }) {
     const onKey = (e) => { if (e.key === 'Escape') onClose() }
     document.addEventListener('pointerdown', onDown, true)
     document.addEventListener('keydown', onKey, true)
-    window.addEventListener('resize', onClose)
+    const width = window.innerWidth
+    const onResize = () => { if (window.innerWidth !== width) onClose() }
+    window.addEventListener('resize', onResize)
     const el = ref.current
     // Focus the chosen row (or the first real row): the sheet grip is a close
     // affordance and focusing it draws a ring across the sheet's top edge.
@@ -550,7 +557,7 @@ function Popup({ className, style, title, onClose, children }) {
     return () => {
       document.removeEventListener('pointerdown', onDown, true)
       document.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('resize', onClose)
+      window.removeEventListener('resize', onResize)
     }
   }, [onClose])
   const onKeyDown = (e) => {
@@ -714,6 +721,7 @@ function SummarySeg() {
 function StatsSheet({ onClose }) {
   const d = React.useSyncExternalStore(dash.subscribe, dash.get, dash.get) ?? {}
   const wasOpen = React.useRef(false)
+  useTick(1000)
   const row = (key, label, value, kind = null) => {
     if (value === null || value === undefined || value === '') return null
     const cells = [h('span', { key: 'l', className: 'ax-dim' }, label), h('span', { key: 'v', className: 'ax-hint' }, value)]
@@ -842,7 +850,8 @@ function installViewport(ctx) {
     const apply = () => {
       raf = 0
       if (!vv) return
-      const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
+      // a pinch-zoomed page shrinks the visual viewport too: that is not a keyboard
+      const kb = vv.scale > 1.01 ? 0 : Math.max(0, window.innerHeight - vv.height - vv.offsetTop)
       root.style.setProperty('--ax-kb', `${Math.round(kb)}px`)
       // 120px of hysteresis: the URL bar collapsing is not a keyboard
       if (kb > 120) root.dataset.asciiKb = ''
@@ -888,7 +897,7 @@ function installDrawerScrim(ctx) {
     const apply = () => {
       const side = document.querySelector('[class*="_sidebarCol"]')
       const conversation = document.querySelector('[data-conversation-content]')
-      const narrow = !window.matchMedia || matchMedia('(max-width: 1023px)').matches
+      const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 1023px) and (pointer: coarse)').matches
       let want = false
       if (side?.isConnected && narrow && conversation) {
         const drawer = side.getBoundingClientRect()
@@ -898,13 +907,20 @@ function installDrawerScrim(ctx) {
       if (want && !scrim.isConnected) document.body.append(scrim)
       else if (!want && scrim.isConnected) scrim.remove()
     }
-    // A timer, not rAF: the drawer animates with a transition and rAF stalls
-    // while the window is hidden.
-    timer = setInterval(apply, 200)
+    // The scrim exists only where the drawer does (a narrow coarse pointer, the
+    // same gate as mobile.css): no polling on a desktop. A timer, not rAF: the
+    // drawer animates with a transition and rAF stalls while the window is hidden.
+    const gate = typeof matchMedia === 'function' ? matchMedia('(max-width: 1023px) and (pointer: coarse)') : null
+    const sync = () => {
+      if (gate?.matches && timer === 0) { timer = setInterval(apply, 200); apply() }
+      else if (!gate?.matches && timer !== 0) { clearInterval(timer); timer = 0; apply() }
+    }
+    gate?.addEventListener('change', sync)
     window.addEventListener('resize', apply, { passive: true })
-    apply()
+    sync()
     return () => {
-      clearInterval(timer)
+      if (timer !== 0) clearInterval(timer)
+      gate?.removeEventListener('change', sync)
       window.removeEventListener('resize', apply)
       scrim.remove()
     }
