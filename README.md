@@ -23,6 +23,7 @@
 - **Touch layout.** On a phone the status line becomes one thumb-sized row and menus become bottom sheets.
 
 ![The sidebar at three densities: cozy, compact, dense](docs/screenshots/densities.png)
+<img src="docs/screenshots/home.gif" width="720" alt="Runtime animation: ASCII home view with the vim-style status line and palette switching">
 
 <table>
 <tr>
